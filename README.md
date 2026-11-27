@@ -130,3 +130,15 @@ docker stop churn-api && docker rm churn-api
 |---|---|
 | ![Swagger](screenshots/docs.png) | ![Predict](screenshots/predict.png) |
 
+## SIS-3: Streamlit + MLflow
+
+- `train_mlflow.py` trains 4 models (2× Logistic Regression, Random Forest, Gradient Boosting) and logs params, metrics and the model artifact to the MLflow experiment `telco-churn`.
+- The best model by F1 (Random Forest) is registered in the MLflow Model Registry as `telco-churn-model` with the alias `@champion`.
+- `app.py` is a Streamlit UI that calls the FastAPI `/predict` endpoint and shows churn risk + retention offers (Next Best Offer).
+
+Run:
+pip install -r requirements-dev.txt
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5001
+python train_mlflow.py
+uvicorn main:app --reload
+streamlit run app.py

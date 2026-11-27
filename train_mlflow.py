@@ -20,7 +20,9 @@ from train import build_pipeline as _build_lr_pipeline
 TRACKING_URI = "sqlite:///mlflow.db"
 EXPERIMENT_NAME = "telco-churn"
 SELECTION_METRIC = "f1"
+REGISTERED_MODEL_NAME = "telco-churn-model"
 
+# Модели
 CANDIDATES = {
     "logreg_C1": (LogisticRegression, {
         "C": 1.0, "class_weight": "balanced", "max_iter": 1000,
@@ -67,7 +69,7 @@ def main():
         X, y, test_size=0.2, stratify=y, random_state=RANDOM_STATE
     )
 
-    best_name, best_score, best_pipeline = None, -1.0, None
+    best_name, best_score, best_pipeline, best_model_uri = None, -1.0, None, None
 
     for name, (model_cls, params) in CANDIDATES.items():
         with mlflow.start_run(run_name=name):
@@ -75,17 +77,14 @@ def main():
             pipeline.fit(X_train, y_train)
             metrics = evaluate(pipeline, X_test, y_test)
 
-            # Параметры:
             mlflow.log_param("model_type", model_cls.__name__)
             mlflow.log_params(params)
             mlflow.log_param("test_size", 0.2)
 
-            # Метрики качества
             mlflow.log_metrics(metrics)
 
-            # Артефакт:
             trusted_types = sio.get_untrusted_types(data=sio.dumps(pipeline))
-            mlflow.sklearn.log_model(
+            model_info = mlflow.sklearn.log_model(
                 pipeline,
                 name="model",
                 input_example=X_test.head(3),
@@ -97,10 +96,29 @@ def main():
 
             if metrics[SELECTION_METRIC] > best_score:
                 best_name, best_score, best_pipeline = name, metrics[SELECTION_METRIC], pipeline
+                best_model_uri = model_info.model_uri
 
-    # Лучшую модель сохраняем для FastAPI
+    print(f"\nЛучшая модель: {best_name} ({SELECTION_METRIC} = {best_score:.3f})")
+
+    register_best_model(best_model_uri, best_name, best_score)
+
     joblib.dump(best_pipeline, MODEL_PATH)
-    print(f"\nЛучшая модель: {best_name} ({SELECTION_METRIC} = {best_score:.3f}) -> {MODEL_PATH}")
+    print(f"Модель сохранена в {MODEL_PATH}")
+
+
+def register_best_model(model_uri: str, run_name: str, score: float):
+    version = mlflow.register_model(model_uri, REGISTERED_MODEL_NAME)
+
+    client = mlflow.MlflowClient()
+    client.update_model_version(
+        name=REGISTERED_MODEL_NAME,
+        version=version.version,
+        description=f"{run_name}, {SELECTION_METRIC}={score:.3f}. "
+                    f"Selected as best of {len(CANDIDATES)} candidates.",
+    )
+    client.set_registered_model_alias(REGISTERED_MODEL_NAME, "champion", version.version)
+
+    print(f"Зарегистрирована: {REGISTERED_MODEL_NAME} версия {version.version} (alias: champion)")
 
 
 if __name__ == "__main__":
